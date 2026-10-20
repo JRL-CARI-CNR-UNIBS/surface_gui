@@ -211,6 +211,14 @@ TrajectoryTab::TrajectoryTab(QWidget * parent)
   }
   connect(keep_tool_orientation_, &QCheckBox::toggled, this, &TrajectoryTab::configChanged);
 
+  // The joint path depends on the planning frame and on the deviation: drop the old one
+  connect(planning_frame_, &QLineEdit::textEdited, this, [this]() {invalidateFrom(1);});
+  for (auto spin : deviation_) {
+    connect(
+      spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+      [this]() {invalidateFrom(1);});
+  }
+
   invalidateFrom(0);
 }
 
