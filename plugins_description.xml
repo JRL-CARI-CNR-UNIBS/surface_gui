@@ -1,0 +1,5 @@
+<library path="surface_gui">
+  <class name="surface_gui/SurfacePanel" type="surface_gui::SurfacePanel" base_class_type="rviz_common::Panel">
+    <description>Surface pipeline: acquisition and reconstruction, raster path, joint path and trajectory.</description>
+  </class>
+</library>
