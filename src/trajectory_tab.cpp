@@ -27,6 +27,7 @@
 #include <moveit_msgs/msg/move_it_error_codes.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <surface_raster_planner_msgs/srv/load_mesh.hpp>
+#include <scene_tools_interfaces/srv/add_object.hpp>
 #include <time_parametrization_msgs/action/apply_time_parametrization.hpp>
 #include <trajectory_msgs/msg/joint_trajectory_point.hpp>
 
@@ -85,7 +86,35 @@ TrajectoryTab::TrajectoryTab(QWidget * parent)
   mesh_layout->addWidget(load_file_button_);
   mesh_layout->addWidget(mesh_label_);
 
-  // --- 2. Raster path
+  // --- 2. Collision object
+  object_file_ = new QLineEdit;
+  object_file_->setPlaceholderText("object file (.ply, .obj, .vtk, .stl)");
+  browse_obj_button_ = new QPushButton("...");
+  browse_obj_button_->setMaximumWidth(32);
+  object_frame_ = new QLineEdit("table");
+  object_frame_->setPlaceholderText("Collision object reference frame");
+  load_obj_button_ = new QPushButton("Load from file");
+  object_label_ = new QLabel("No object loaded");
+  object_label_->setWordWrap(true);
+  padding_ = makeSpinBox(0.0005, 1.0, 0.001, 4, 0.02, " m");
+
+  auto collision_box = new QGroupBox("2. Collision Object");
+  auto object_layout = new QVBoxLayout(collision_box);
+  auto file_obj_row = new QHBoxLayout;
+  file_obj_row->addWidget(object_file_);
+  file_obj_row->addWidget(browse_obj_button_);
+  object_layout->addLayout(file_obj_row);
+  auto frame_obj_row = new QFormLayout;
+  frame_obj_row->addRow("Frame", object_frame_);
+  object_layout->addLayout(frame_obj_row);
+  object_layout->addWidget(load_obj_button_);
+  object_layout->addWidget(object_label_);
+  auto padding_form = new QFormLayout;
+  padding_form->addRow("Padding", padding_);
+  object_layout->addLayout(padding_form);
+  
+
+  // --- 3. Raster path
   row_step_ = makeSpinBox(0.0005, 1.0, 0.001, 4, 0.02, " m");
   row_step_->setToolTip("Distance between two consecutive rows, along the short side");
   keep_tool_orientation_ = new QCheckBox("Keep tool orientation");
@@ -96,7 +125,7 @@ TrajectoryTab::TrajectoryTab(QWidget * parent)
   raster_label_ = new QLabel;
   raster_label_->setWordWrap(true);
 
-  auto raster_box = new QGroupBox("2. Raster path");
+  auto raster_box = new QGroupBox("3. Raster path");
   auto raster_layout = new QVBoxLayout(raster_box);
   auto raster_form = new QFormLayout;
   raster_form->addRow("Row step", row_step_);
@@ -105,7 +134,7 @@ TrajectoryTab::TrajectoryTab(QWidget * parent)
   raster_layout->addWidget(raster_button_);
   raster_layout->addWidget(raster_label_);
 
-  // --- 3. Joint path
+  // --- 4. Joint path
   planning_frame_ = new QLineEdit("open_tip");
   planning_frame_->setToolTip("Robot frame (TCP) that must reach the poses");
   auto deviation_row = new QHBoxLayout;
@@ -120,7 +149,7 @@ TrajectoryTab::TrajectoryTab(QWidget * parent)
   joint_path_label_ = new QLabel;
   joint_path_label_->setWordWrap(true);
 
-  auto joint_path_box = new QGroupBox("3. Joint path");
+  auto joint_path_box = new QGroupBox("4. Joint path");
   auto joint_path_layout = new QVBoxLayout(joint_path_box);
   auto joint_path_form = new QFormLayout;
   joint_path_form->addRow("Planning frame", planning_frame_);
@@ -129,7 +158,7 @@ TrajectoryTab::TrajectoryTab(QWidget * parent)
   joint_path_layout->addWidget(joint_path_button_);
   joint_path_layout->addWidget(joint_path_label_);
 
-  // --- 4. Trajectory
+  // --- 5. Trajectory
   group_name_ = new QLineEdit("ur_robot");
   group_name_->setToolTip("MoveIt planning group");
   scaling_factor_ = makeSpinBox(0.01, 1.0, 0.05, 2, 0.1, "");
@@ -142,7 +171,7 @@ TrajectoryTab::TrajectoryTab(QWidget * parent)
   trajectory_label_ = new QLabel;
   trajectory_label_->setWordWrap(true);
 
-  auto trajectory_box = new QGroupBox("4. Trajectory");
+  auto trajectory_box = new QGroupBox("5. Trajectory");
   auto trajectory_layout = new QVBoxLayout(trajectory_box);
   auto trajectory_form = new QFormLayout;
   trajectory_form->addRow("Planning group", group_name_);
@@ -180,6 +209,7 @@ TrajectoryTab::TrajectoryTab(QWidget * parent)
 
   auto layout = new QVBoxLayout(this);
   layout->addWidget(mesh_box);
+  layout->addWidget(collision_box);
   layout->addWidget(raster_box);
   layout->addWidget(joint_path_box);
   layout->addWidget(trajectory_box);
@@ -190,6 +220,10 @@ TrajectoryTab::TrajectoryTab(QWidget * parent)
   connect(load_topic_button_, &QPushButton::clicked, this, &TrajectoryTab::loadMeshFromTopic);
   connect(load_file_button_, &QPushButton::clicked, this, &TrajectoryTab::loadMeshFromFile);
   connect(browse_button_, &QPushButton::clicked, this, &TrajectoryTab::browseMeshFile);
+
+  connect(load_obj_button_, &QPushButton::clicked, this, &TrajectoryTab::loadObjectFromFile);
+  connect(browse_obj_button_, &QPushButton::clicked, this, &TrajectoryTab::browseObjectFile);
+
   connect(raster_button_, &QPushButton::clicked, this, &TrajectoryTab::computeRaster);
   connect(joint_path_button_, &QPushButton::clicked, this, &TrajectoryTab::computeJointPath);
   connect(trajectory_button_, &QPushButton::clicked, this, &TrajectoryTab::computeTrajectory);
@@ -254,6 +288,12 @@ void TrajectoryTab::subscribeJointStates()
 void TrajectoryTab::setMeshFile(const QString & filename)
 {
   mesh_file_->setText(filename);
+  Q_EMIT configChanged();
+}
+
+void TrajectoryTab::setObjectFile(const QString & filename)
+{
+  object_file_->setText(filename);
   Q_EMIT configChanged();
 }
 
@@ -373,7 +413,58 @@ void TrajectoryTab::browseMeshFile()
   }
 }
 
-// ------------------------------------------------------------------------------ 2. Raster path
+// ------------------------------------------------------------------------------ 2. Collision object
+
+void TrajectoryTab::loadObjectFromFile()
+{
+  using LoadObject = scene_tools_interfaces::srv::AddObject;
+  const QString filename = object_file_->text().trimmed();
+  if (filename.isEmpty()) {
+    error("Select an object file first");
+    return;
+  }
+  auto request = std::make_shared<LoadObject::Request>();
+  request->mesh_file = filename.toStdString();
+  request->frame_id = object_frame_->text().trimmed().isEmpty()
+    ? "table"
+    : object_frame_->text().trimmed().toStdString();
+  request->scale = 1.0;
+  request->padding = padding_->value();
+
+  const bool sent = callService<LoadObject>(
+    "/add_object", request, kLoadTimeoutMs,
+    [this, filename](LoadObject::Response::SharedPtr response) {
+      setBusy(false);
+      if (!response) {
+        return;
+      }
+      const QString message = QString::fromStdString(response->message);
+      if (!response->success) {
+        error(message);
+        return;
+      }
+      info(message);
+      object_label_->setText(QString("From %1: %2").arg(filename, message));
+      invalidateFrom(0);
+    });
+  if (sent) {
+    setBusy(true);
+  }
+}
+
+void TrajectoryTab::browseObjectFile()
+{
+  const QString start = object_file_->text().isEmpty() ? QDir::homePath() : object_file_->text();
+  const QString file = QFileDialog::getOpenFileName(
+    this, "Load object", start, "objectes (*.ply *.obj *.vtk *.stl);;All files (*)");
+  if (!file.isEmpty()) {
+    setObjectFile(file);
+  }
+}
+
+
+
+// ------------------------------------------------------------------------------ 3. Raster path
 
 void TrajectoryTab::computeRaster()
 {
@@ -411,7 +502,7 @@ void TrajectoryTab::computeRaster()
   }
 }
 
-// ------------------------------------------------------------------------------- 3. Joint path
+// ------------------------------------------------------------------------------- 4. Joint path
 
 void TrajectoryTab::computeJointPath()
 {
@@ -466,7 +557,7 @@ void TrajectoryTab::computeJointPath()
   }
 }
 
-// ------------------------------------------------------------------------------- 4. Trajectory
+// ------------------------------------------------------------------------------- 5. Trajectory
 
 void TrajectoryTab::computeTrajectory()
 {

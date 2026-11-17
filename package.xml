@@ -23,6 +23,8 @@
   <depend>surface_raster_planner_msgs</depend>
   <depend>surface_path_planning_msgs</depend>
   <depend>time_parametrization_msgs</depend>
+  <depend>scene_tools_interfaces</depend>
+
 
   <exec_depend>rviz2</exec_depend>
 

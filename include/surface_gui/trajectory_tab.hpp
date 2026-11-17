@@ -31,10 +31,11 @@ namespace surface_gui
 /// Tab "Path & trajectory": the chain after the reconstruction.
 ///
 /// 1. load the mesh in raster_planner_node (from topic or file);
-/// 2. raster path (compute_trajectory service of surface_raster_planner);
-/// 3. joint path (compute_joint_path action of surface_path_planning);
-/// 4. time parametrization (action of the time_parametrization package);
-/// 5. execution with MoveIt (execute_trajectory action of move_group).
+/// 2. load the collision object (from file)
+/// 3. raster path (compute_trajectory service of surface_raster_planner);
+/// 4. joint path (compute_joint_path action of surface_path_planning);
+/// 5. time parametrization (action of the time_parametrization package);
+/// 6. execution with MoveIt (execute_trajectory action of move_group).
 ///
 /// Each step uses the result of the previous one; a new result invalidates the following ones.
 class TrajectoryTab : public TabBase
@@ -51,6 +52,7 @@ public:
 public Q_SLOTS:
   /// Set the file used by "Load from file" (e.g. the mesh just saved by the reconstruction tab).
   void setMeshFile(const QString & filename);
+  void setObjectFile(const QString & filename);
 
 protected:
   void updateButtons() override;
@@ -62,6 +64,8 @@ private:
   void loadMeshFromTopic();
   void loadMeshFromFile();
   void browseMeshFile();
+  void loadObjectFromFile();
+  void browseObjectFile();
   void computeRaster();
   void computeJointPath();
   void computeTrajectory();
@@ -91,19 +95,27 @@ private:
   QPushButton * load_file_button_;
   QLabel * mesh_label_;
 
-  // 2. Raster path
+    // 2. Collision Object
+  QLineEdit * object_file_;
+  QPushButton * browse_obj_button_;
+  QLineEdit * object_frame_;
+  QPushButton * load_obj_button_;
+  QLabel * object_label_;
+  QDoubleSpinBox * padding_;
+
+  // 3. Raster path
   QDoubleSpinBox * row_step_;
   QCheckBox * keep_tool_orientation_;
   QPushButton * raster_button_;
   QLabel * raster_label_;
 
-  // 3. Joint path
+  // 4. Joint path
   QLineEdit * planning_frame_;
   QDoubleSpinBox * deviation_[3];
   QPushButton * joint_path_button_;
   QLabel * joint_path_label_;
 
-  // 4. Trajectory
+  // 5. Trajectory
   QLineEdit * group_name_;
   QDoubleSpinBox * scaling_factor_;
   QPushButton * trajectory_button_;
