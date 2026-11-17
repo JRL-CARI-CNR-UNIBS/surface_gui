@@ -17,7 +17,6 @@ find_package(moveit_msgs REQUIRED)
 find_package(surface_reconstruction_msgs REQUIRED)
 find_package(surface_raster_planner_msgs REQUIRED)
 find_package(surface_path_planning_msgs REQUIRED)
-find_package(time_parametrization_msgs REQUIRED)
 find_package(scene_tools_interfaces REQUIRED)
 find_package(Qt5 REQUIRED COMPONENTS Widgets)
 
@@ -54,7 +53,6 @@ target_link_libraries(${PROJECT_NAME}
   ${surface_reconstruction_msgs_TARGETS}
   ${surface_raster_planner_msgs_TARGETS}
   ${surface_path_planning_msgs_TARGETS}
-  ${time_parametrization_msgs_TARGETS}
   ${scene_tools_interfaces_TARGETS}
 )
 

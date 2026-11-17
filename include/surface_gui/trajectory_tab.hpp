@@ -14,6 +14,7 @@
 #include <moveit_msgs/msg/robot_trajectory.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <surface_path_planning_msgs/action/compute_joint_path.hpp>
+#include <surface_path_planning_msgs/action/compute_joint_trajectory.hpp>
 #include <surface_raster_planner_msgs/srv/compute_trajectory.hpp>
 
 #include "surface_gui/tab_base.hpp"
@@ -34,7 +35,7 @@ namespace surface_gui
 /// 2. load the collision object (from file)
 /// 3. raster path (compute_trajectory service of surface_raster_planner);
 /// 4. joint path (compute_joint_path action of surface_path_planning);
-/// 5. time parametrization (action of the time_parametrization package);
+/// 5. time parametrization of the joint paths (compute_joint_trajectory action of surface_path_planning);
 /// 6. execution with MoveIt (execute_trajectory action of move_group).
 ///
 /// Each step uses the result of the previous one; a new result invalidates the following ones.
@@ -60,6 +61,7 @@ protected:
 private:
   using ComputeTrajectory = surface_raster_planner_msgs::srv::ComputeTrajectory;
   using ComputeJointPath = surface_path_planning_msgs::action::ComputeJointPath;
+  using ComputeJointTrajectory = surface_path_planning_msgs::action::ComputeJointTrajectory;
 
   void loadMeshFromTopic();
   void loadMeshFromFile();
@@ -83,7 +85,7 @@ private:
   // Interfaces
   QLineEdit * raster_node_;
   QLineEdit * joint_path_action_;
-  QLineEdit * time_parametrization_action_;
+  QLineEdit * joint_trajectory_action_;
   QLineEdit * execute_action_;
   QLineEdit * joint_states_topic_;
 
@@ -118,8 +120,8 @@ private:
   QLabel * joint_path_label_;
 
   // 5. Trajectory
-  QLineEdit * group_name_;
-  QDoubleSpinBox * scaling_factor_;
+  QDoubleSpinBox * surface_scaling_;      ///< velocity and acceleration scaling of the surface paths
+  QDoubleSpinBox * free_motion_scaling_;  ///< velocity and acceleration scaling of the free motions
   QPushButton * trajectory_button_;
   QPushButton * execute_button_;
   QLabel * trajectory_label_;
@@ -132,6 +134,7 @@ private:
   std::shared_ptr<ComputeJointPath::Result> joint_path_;
   std::shared_ptr<moveit_msgs::msg::RobotTrajectory> trajectory_;
 
+  // Used to check that the robot is still at the start of the joint path.
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_states_sub_;
   std::mutex joint_state_mutex_;
   sensor_msgs::msg::JointState::SharedPtr joint_state_;  ///< protected by joint_state_mutex_

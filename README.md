@@ -3,14 +3,14 @@
 Rviz 2 panel (`surface_gui/SurfacePanel`) that drives the surface pipeline without the command line. It has two tabs and a log shared by both:
 
 - **Acquisition**: acquisition and surface reconstruction with `cloud_merger_node` ([`surface_reconstruction`](https://github.com/JRL-CARI-CNR-UNIBS/surface_reconstruction)).
-- **Path & trajectory**: raster path ([`surface_raster_planner`](https://github.com/JRL-CARI-CNR-UNIBS/surface_raster_planner)), joint path ([`surface_path_planning`](https://github.com/JRL-CARI-CNR-UNIBS/surface_path_planning)), time parametrization (`time_parametrization`) and execution with MoveIt.
+- **Path & trajectory**: raster path ([`surface_raster_planner`](https://github.com/JRL-CARI-CNR-UNIBS/surface_raster_planner)), joint path ([`surface_path_planning`](https://github.com/JRL-CARI-CNR-UNIBS/surface_path_planning)), time parametrization (`compute_joint_trajectory` action of `surface_path_planning`) and execution with MoveIt.
 
 Service and action calls are asynchronous: Rviz never freezes, even during long computations.
 
 ## Requirements
 
 - Ubuntu 24.04, ROS 2 Jazzy, Rviz 2 (Qt 5)
-- The interface packages, in the same workspace: `surface_reconstruction_msgs`, `surface_raster_planner_msgs`, `surface_path_planning_msgs`, `time_parametrization_msgs`
+- The interface packages, in the same workspace: `surface_reconstruction_msgs`, `surface_raster_planner_msgs`, `surface_path_planning_msgs`
 - `moveit_msgs`
 
 The panel only needs the interface packages to build. The nodes it drives can run anywhere on the ROS network.
@@ -47,14 +47,14 @@ The steps run in order. Each step uses the result of the previous one, and a new
 | 1. Mesh | `<raster>/load_mesh_from_topic` (`std_srvs/Trigger`) or `<raster>/load_mesh_from_file` (`surface_raster_planner_msgs/LoadMesh`) | file and frame (empty frame: node parameter `mesh_frame`) |
 | 2. Raster path | `<raster>/compute_trajectory` (`surface_raster_planner_msgs/ComputeTrajectory`) | row step, row angle (deg in the GUI, rad in the request), edge margin, keep tool orientation |
 | 3. Joint path | `/compute_joint_path` action (`surface_path_planning_msgs/ComputeJointPath`) | planning frame (TCP), leave/approach offset in the tool frame. The progress bar shows the server feedback |
-| 4. Trajectory | `/compute_joint_trajectory` action (`time_parametrization_msgs/ApplyTimeParametrization`) | planning group, velocity/acceleration scaling factor |
+| 4. Trajectory | `/compute_joint_trajectory` action (`surface_path_planning_msgs/ComputeJointTrajectory`) | velocity/acceleration scaling factor of the surface paths and of the free motions. It sends the `paths` of the joint path: each one is retimed separately and the robot stops between them |
 | Execute | `/execute_trajectory` action of move_group (`moveit_msgs/ExecuteTrajectory`) | asks for confirmation |
 
 `<raster>` is `/raster_planner_node` by default. All the names can be changed in the **Interfaces** section.
 
 **Cancel** cancels the running action (joint path, time parametrization or execution: during the execution it stops the robot).
 
-As in `send_raster_to_joint_path.py`, step 4 prepends the current robot configuration (read from `/joint_states`) to the joint path, otherwise MoveIt rejects the trajectory. For this reason, after an execution the trajectory is cleared: compute it again from the new robot configuration.
+The joint paths start from the robot configuration read by `compute_joint_path`. Step 4 checks on `/joint_states` that the robot has not moved since then, otherwise MoveIt would reject the trajectory. For this reason, after an execution the joint path and the trajectory are cleared: compute the joint path again from the new robot configuration.
 
 ### Topics published by the panel
 

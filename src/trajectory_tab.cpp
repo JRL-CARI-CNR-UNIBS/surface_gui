@@ -4,6 +4,7 @@
 
 #include "surface_gui/trajectory_tab.hpp"
 
+#include <cmath>
 #include <map>
 #include <string>
 #include <vector>
@@ -24,13 +25,10 @@
 #include <QVBoxLayout>
 
 #include <moveit_msgs/action/execute_trajectory.hpp>
-#include <moveit_msgs/msg/motion_plan_response.hpp>
 #include <moveit_msgs/msg/move_it_error_codes.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <surface_raster_planner_msgs/srv/load_mesh.hpp>
 #include <scene_tools_interfaces/srv/add_object.hpp>
-#include <time_parametrization_msgs/action/apply_time_parametrization.hpp>
-#include <trajectory_msgs/msg/joint_trajectory_point.hpp>
 
 namespace surface_gui
 {
@@ -170,13 +168,14 @@ TrajectoryTab::TrajectoryTab(QWidget * parent)
   joint_path_layout->addWidget(joint_path_label_);
 
   // --- 5. Trajectory
-  group_name_ = new QLineEdit("ur_robot");
-  group_name_->setToolTip("MoveIt planning group");
-  scaling_factor_ = makeSpinBox(0.01, 1.0, 0.05, 2, 0.1, "");
-  scaling_factor_->setToolTip("Velocity and acceleration scaling factor");
+  surface_scaling_ = makeSpinBox(0.01, 1.0, 0.05, 2, 0.1, "");
+  surface_scaling_->setToolTip("Velocity and acceleration scaling factor along the surface");
+  free_motion_scaling_ = makeSpinBox(0.01, 1.0, 0.05, 2, 0.1, "");
+  free_motion_scaling_->setToolTip(
+    "Velocity and acceleration scaling factor of the leave, transfer and approach motions");
   trajectory_button_ = new QPushButton("Compute trajectory");
   trajectory_button_->setToolTip(
-    "Time parametrization of the joint path, starting from the current robot configuration");
+    "Time parametrization of the joint paths (one request per path, the robot stops between them)");
   execute_button_ = new QPushButton("Execute");
   execute_button_->setToolTip("Execute the trajectory with MoveIt: the robot moves");
   trajectory_label_ = new QLabel;
@@ -185,8 +184,8 @@ TrajectoryTab::TrajectoryTab(QWidget * parent)
   auto trajectory_box = new QGroupBox("5. Trajectory");
   auto trajectory_layout = new QVBoxLayout(trajectory_box);
   auto trajectory_form = new QFormLayout;
-  trajectory_form->addRow("Planning group", group_name_);
-  trajectory_form->addRow("Scaling factor", scaling_factor_);
+  trajectory_form->addRow("Surface scaling", surface_scaling_);
+  trajectory_form->addRow("Free motion scaling", free_motion_scaling_);
   trajectory_layout->addLayout(trajectory_form);
   auto trajectory_buttons = new QHBoxLayout;
   trajectory_buttons->addWidget(trajectory_button_);
@@ -207,14 +206,14 @@ TrajectoryTab::TrajectoryTab(QWidget * parent)
   // --- Interfaces
   raster_node_ = new QLineEdit("/raster_planner_node");
   joint_path_action_ = new QLineEdit("/compute_joint_path");
-  time_parametrization_action_ = new QLineEdit("/compute_joint_trajectory");
+  joint_trajectory_action_ = new QLineEdit("/compute_joint_trajectory");
   execute_action_ = new QLineEdit("/execute_trajectory");
   joint_states_topic_ = new QLineEdit("/joint_states");
   auto interfaces = new QWidget;
   auto interfaces_layout = new QFormLayout(interfaces);
   interfaces_layout->addRow("Raster planner node", raster_node_);
   interfaces_layout->addRow("Joint path action", joint_path_action_);
-  interfaces_layout->addRow("Time param. action", time_parametrization_action_);
+  interfaces_layout->addRow("Joint trajectory action", joint_trajectory_action_);
   interfaces_layout->addRow("Execute action", execute_action_);
   interfaces_layout->addRow("Joint states topic", joint_states_topic_);
 
@@ -244,13 +243,15 @@ TrajectoryTab::TrajectoryTab(QWidget * parent)
       subscribeJointStates();
     });
 
-  for (auto edit : {raster_node_, joint_path_action_, time_parametrization_action_,
+  for (auto edit : {raster_node_, joint_path_action_, joint_trajectory_action_,
       execute_action_, joint_states_topic_, mesh_file_, mesh_frame_, object_file_, object_frame_,
-      planning_frame_, group_name_})
+      planning_frame_})
   {
     connect(edit, &QLineEdit::editingFinished, this, &TrajectoryTab::configChanged);
   }
-  for (auto spin : {padding_, row_step_, row_angle_, edge_margin_, deviation_[0], deviation_[1], deviation_[2], scaling_factor_}) {
+  for (auto spin : {padding_, row_step_, row_angle_, edge_margin_, deviation_[0], deviation_[1], deviation_[2],
+      surface_scaling_, free_motion_scaling_})
+  {
     connect(
       spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
       &TrajectoryTab::configChanged);
@@ -316,7 +317,7 @@ void TrajectoryTab::updateButtons()
   load_file_button_->setEnabled(idle);
   raster_button_->setEnabled(idle);
   joint_path_button_->setEnabled(idle && raster_ && !raster_->poses.poses.empty());
-  trajectory_button_->setEnabled(idle && joint_path_ && !joint_path_->trajectory.points.empty());
+  trajectory_button_->setEnabled(idle && joint_path_ && !joint_path_->paths.empty());
   execute_button_->setEnabled(idle && trajectory_ != nullptr);
   cancel_button_->setEnabled(hasRunningGoal());
 }
@@ -558,8 +559,9 @@ void TrajectoryTab::computeJointPath()
         reached += i >= 0;
       }
       joint_path_label_->setText(
-        QString("%1 points, %2 poses reached, %3 skipped")
-        .arg(result->trajectory.points.size()).arg(reached).arg(result->skipped_indices.size()));
+        QString("%1 points in %2 paths, %3 poses reached, %4 skipped")
+        .arg(result->trajectory.points.size()).arg(result->paths.size()).arg(reached)
+        .arg(result->skipped_indices.size()));
       if (!result->skipped_indices.empty()) {
         warn(QString("%1 poses skipped (no feasible configuration)")
           .arg(result->skipped_indices.size()));
@@ -576,14 +578,12 @@ void TrajectoryTab::computeJointPath()
 
 void TrajectoryTab::computeTrajectory()
 {
-  using ApplyTimeParametrization = time_parametrization_msgs::action::ApplyTimeParametrization;
-  using moveit_msgs::msg::MoveItErrorCodes;
-  if (!joint_path_ || joint_path_->trajectory.points.empty()) {
+  if (!joint_path_ || joint_path_->paths.empty()) {
     return;
   }
 
-  // The joint path does not contain the current configuration: prepend it, otherwise MoveIt
-  // rejects the trajectory because its first point is not the robot state.
+  // The first path starts at the robot configuration of the joint path computation: if the robot
+  // moved, MoveIt would reject the trajectory.
   sensor_msgs::msg::JointState::SharedPtr joint_state;
   {
     std::lock_guard<std::mutex> lock(joint_state_mutex_);
@@ -597,65 +597,67 @@ void TrajectoryTab::computeTrajectory()
   for (size_t i = 0; i < joint_state->name.size() && i < joint_state->position.size(); ++i) {
     current[joint_state->name[i]] = joint_state->position[i];
   }
-  trajectory_msgs::msg::JointTrajectory path = joint_path_->trajectory;
-  std::vector<double> q_now;
-  for (const auto & joint : path.joint_names) {
-    auto it = current.find(joint);
+  const auto & first = joint_path_->paths.front();
+  if (first.points.empty() || first.points.front().positions.size() != first.joint_names.size()) {
+    error("Malformed joint path");
+    return;
+  }
+  for (size_t j = 0; j < first.joint_names.size(); ++j) {
+    auto it = current.find(first.joint_names[j]);
     if (it == current.end()) {
       error(QString("Joint %1 not in %2").arg(
-          QString::fromStdString(joint), joint_states_topic_->text()));
+          QString::fromStdString(first.joint_names[j]), joint_states_topic_->text()));
       return;
     }
-    q_now.push_back(it->second);
+    if (std::abs(it->second - first.points.front().positions[j]) > 1e-3) {
+      error("The robot moved after the joint path was computed: compute the joint path again");
+      return;
+    }
   }
-  trajectory_msgs::msg::JointTrajectoryPoint start_point;
-  start_point.positions = q_now;
-  path.points.insert(path.points.begin(), start_point);
 
-  moveit_msgs::msg::RobotState start_state;
-  start_state.joint_state.name = path.joint_names;
-  start_state.joint_state.position = q_now;
+  ComputeJointTrajectory::Goal goal;
+  goal.paths = joint_path_->paths;
+  goal.path_types = joint_path_->path_types;
+  goal.surface_velocity_scaling = surface_scaling_->value();
+  goal.surface_acceleration_scaling = surface_scaling_->value();
+  goal.free_motion_velocity_scaling = free_motion_scaling_->value();
+  goal.free_motion_acceleration_scaling = free_motion_scaling_->value();
 
-  ApplyTimeParametrization::Goal goal;
-  auto & plan = goal.unparametrized_motion_plan_response;
-  plan.group_name = group_name_->text().trimmed().toStdString();
-  plan.trajectory.joint_trajectory = path;
-  plan.trajectory_start = start_state;
-  goal.max_velocity_scaling_factor = scaling_factor_->value();
-  goal.max_acceleration_scaling_factor = scaling_factor_->value();
-
-  const double scaling = scaling_factor_->value();
-  const bool sent = sendGoal<ApplyTimeParametrization>(
-    time_parametrization_action_->text().trimmed().toStdString(), goal, nullptr,
-    [this, start_state, scaling](
-      rclcpp_action::ResultCode code, ApplyTimeParametrization::Result::SharedPtr result) {
+  const QString scaling = QString("scaling %1 surface, %2 free motion")
+    .arg(surface_scaling_->value()).arg(free_motion_scaling_->value());
+  const bool sent = sendGoal<ComputeJointTrajectory>(
+    joint_trajectory_action_->text().trimmed().toStdString(), goal,
+    [this](const ComputeJointTrajectory::Feedback & feedback) {
+      setProgress(
+        static_cast<int>(feedback.current_index), static_cast<int>(feedback.total_paths),
+        QString("%v/%m  ") + QString::fromStdString(feedback.status));
+    },
+    [this, scaling](rclcpp_action::ResultCode code, ComputeJointTrajectory::Result::SharedPtr result) {
       hideProgress();
       setBusy(false);
       if (!result) {
         return;
       }
-      const auto & response = result->motion_plan_response;
-      if (code != rclcpp_action::ResultCode::SUCCEEDED ||
-      response.error_code.val != MoveItErrorCodes::SUCCESS)
-      {
-        error(QString("Time parametrization failed (error code %1)").arg(response.error_code.val));
+      if (code != rclcpp_action::ResultCode::SUCCEEDED || !result->success) {
+        error("Time parametrization failed: " + QString::fromStdString(result->message));
         return;
       }
-      const auto & points = response.trajectory.joint_trajectory.points;
+      const auto & points = result->trajectory.joint_trajectory.points;
       if (points.empty()) {
         error("Time parametrization returned an empty trajectory");
         return;
       }
       invalidateFrom(2);
-      trajectory_ = std::make_shared<moveit_msgs::msg::RobotTrajectory>(response.trajectory);
+      trajectory_ = std::make_shared<moveit_msgs::msg::RobotTrajectory>(result->trajectory);
       const double duration = seconds(points.back().time_from_start);
-      const QString text = QString("%1 points, %2 s (scaling factor %3)")
+      const QString text = QString("%1 points, %2 s (%3)")
         .arg(points.size()).arg(duration, 0, 'f', 2).arg(scaling);
       trajectory_label_->setText(text);
       info("Trajectory: " + text);
 
       moveit_msgs::msg::DisplayTrajectory display;
-      display.trajectory_start = start_state;
+      display.trajectory_start.joint_state.name = result->trajectory.joint_trajectory.joint_names;
+      display.trajectory_start.joint_state.position = points.front().positions;
       display.trajectory.push_back(*trajectory_);
       display_pub_->publish(display);
       updateButtons();
@@ -691,8 +693,8 @@ void TrajectoryTab::executeTrajectory()
     [this](rclcpp_action::ResultCode code, ExecuteTrajectory::Result::SharedPtr result) {
       hideProgress();
       setBusy(false);
-      // The robot is no longer in the start configuration of the trajectory
-      invalidateFrom(2);
+      // The robot is no longer at the start of the joint path (and of the trajectory)
+      invalidateFrom(1);
       if (!result) {
         return;
       }
@@ -716,7 +718,7 @@ void TrajectoryTab::save(rviz_common::Config config) const
 {
   config.mapSetValue("raster_node", raster_node_->text());
   config.mapSetValue("joint_path_action", joint_path_action_->text());
-  config.mapSetValue("time_parametrization_action", time_parametrization_action_->text());
+  config.mapSetValue("joint_trajectory_action", joint_trajectory_action_->text());
   config.mapSetValue("execute_action", execute_action_->text());
   config.mapSetValue("joint_states_topic", joint_states_topic_->text());
   config.mapSetValue("mesh_file", mesh_file_->text());
@@ -732,8 +734,8 @@ void TrajectoryTab::save(rviz_common::Config config) const
   config.mapSetValue("deviation_x", deviation_[0]->value());
   config.mapSetValue("deviation_y", deviation_[1]->value());
   config.mapSetValue("deviation_z", deviation_[2]->value());
-  config.mapSetValue("group_name", group_name_->text());
-  config.mapSetValue("scaling_factor", scaling_factor_->value());
+  config.mapSetValue("surface_scaling", surface_scaling_->value());
+  config.mapSetValue("free_motion_scaling", free_motion_scaling_->value());
 }
 
 void TrajectoryTab::load(const rviz_common::Config & config)
@@ -741,7 +743,7 @@ void TrajectoryTab::load(const rviz_common::Config & config)
   const std::pair<const char *, QLineEdit *> strings[] = {
     {"raster_node", raster_node_},
     {"joint_path_action", joint_path_action_},
-    {"time_parametrization_action", time_parametrization_action_},
+    {"joint_trajectory_action", joint_trajectory_action_},
     {"execute_action", execute_action_},
     {"joint_states_topic", joint_states_topic_},
     {"mesh_file", mesh_file_},
@@ -749,7 +751,6 @@ void TrajectoryTab::load(const rviz_common::Config & config)
     {"object_file", object_file_},
     {"object_frame", object_frame_},
     {"planning_frame", planning_frame_},
-    {"group_name", group_name_},
   };
   for (const auto & [key, edit] : strings) {
     QString value;
@@ -765,7 +766,10 @@ void TrajectoryTab::load(const rviz_common::Config & config)
     {"deviation_x", deviation_[0]},
     {"deviation_y", deviation_[1]},
     {"deviation_z", deviation_[2]},
-    {"scaling_factor", scaling_factor_},
+    {"scaling_factor", surface_scaling_},  // old configurations: one factor for everything
+    {"scaling_factor", free_motion_scaling_},
+    {"surface_scaling", surface_scaling_},
+    {"free_motion_scaling", free_motion_scaling_},
   };
   for (const auto & [key, spin] : numbers) {
     float value;
