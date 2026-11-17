@@ -45,7 +45,7 @@ The steps run in order. Each step uses the result of the previous one, and a new
 | Step | Call | Inputs |
 |---|---|---|
 | 1. Mesh | `<raster>/load_mesh_from_topic` (`std_srvs/Trigger`) or `<raster>/load_mesh_from_file` (`surface_raster_planner_msgs/LoadMesh`) | file and frame (empty frame: node parameter `mesh_frame`) |
-| 2. Raster path | `<raster>/compute_trajectory` (`surface_raster_planner_msgs/ComputeTrajectory`) | row step, keep tool orientation |
+| 2. Raster path | `<raster>/compute_trajectory` (`surface_raster_planner_msgs/ComputeTrajectory`) | row step, row angle (deg in the GUI, rad in the request), edge margin, keep tool orientation |
 | 3. Joint path | `/compute_joint_path` action (`surface_path_planning_msgs/ComputeJointPath`) | planning frame (TCP), leave/approach offset in the tool frame. The progress bar shows the server feedback |
 | 4. Trajectory | `/compute_joint_trajectory` action (`time_parametrization_msgs/ApplyTimeParametrization`) | planning group, velocity/acceleration scaling factor |
 | Execute | `/execute_trajectory` action of move_group (`moveit_msgs/ExecuteTrajectory`) | asks for confirmation |

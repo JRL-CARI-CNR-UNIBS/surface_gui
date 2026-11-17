@@ -11,6 +11,7 @@
 #include <QCheckBox>
 #include <QDir>
 #include <QDoubleSpinBox>
+#include <QtMath>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -116,10 +117,18 @@ TrajectoryTab::TrajectoryTab(QWidget * parent)
 
   // --- 3. Raster path
   row_step_ = makeSpinBox(0.0005, 1.0, 0.001, 4, 0.02, " m");
-  row_step_->setToolTip("Distance between two consecutive rows, along the short side");
+  row_step_->setToolTip("Distance between two consecutive rows, measured across the rows");
+  row_angle_ = makeSpinBox(-180.0, 180.0, 5.0, 1, 0.0, " deg");
+  row_angle_->setToolTip(
+    "Inclination of the rows with respect to the long side of the surface,\n"
+    "counter-clockwise around the mean normal. 0 = along the long side, 90 = along the short side.");
+  edge_margin_ = makeSpinBox(0.0, 1.0, 0.001, 4, 0.0, " m");
+  edge_margin_->setToolTip(
+    "Poses closer than this to the boundary of the surface (outline and holes) are dropped.\n"
+    "0 disables.");
   keep_tool_orientation_ = new QCheckBox("Keep tool orientation");
   keep_tool_orientation_->setToolTip(
-    "Checked: the tool x axis always follows the long side, also on the return rows.\n"
+    "Checked: the tool x axis always follows the row direction, also on the return rows.\n"
     "Unchecked: the tool x axis follows the travel direction (flips on the return rows).");
   raster_button_ = new QPushButton("Compute raster path");
   raster_label_ = new QLabel;
@@ -129,6 +138,8 @@ TrajectoryTab::TrajectoryTab(QWidget * parent)
   auto raster_layout = new QVBoxLayout(raster_box);
   auto raster_form = new QFormLayout;
   raster_form->addRow("Row step", row_step_);
+  raster_form->addRow("Row angle", row_angle_);
+  raster_form->addRow("Edge margin", edge_margin_);
   raster_layout->addLayout(raster_form);
   raster_layout->addWidget(keep_tool_orientation_);
   raster_layout->addWidget(raster_button_);
@@ -234,11 +245,12 @@ TrajectoryTab::TrajectoryTab(QWidget * parent)
     });
 
   for (auto edit : {raster_node_, joint_path_action_, time_parametrization_action_,
-      execute_action_, joint_states_topic_, mesh_file_, mesh_frame_, planning_frame_, group_name_})
+      execute_action_, joint_states_topic_, mesh_file_, mesh_frame_, object_file_, object_frame_,
+      planning_frame_, group_name_})
   {
     connect(edit, &QLineEdit::editingFinished, this, &TrajectoryTab::configChanged);
   }
-  for (auto spin : {row_step_, deviation_[0], deviation_[1], deviation_[2], scaling_factor_}) {
+  for (auto spin : {padding_, row_step_, row_angle_, edge_margin_, deviation_[0], deviation_[1], deviation_[2], scaling_factor_}) {
     connect(
       spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
       &TrajectoryTab::configChanged);
@@ -471,6 +483,8 @@ void TrajectoryTab::computeRaster()
   auto request = std::make_shared<ComputeTrajectory::Request>();
   request->row_step = row_step_->value();
   request->keep_tool_orientation = keep_tool_orientation_->isChecked();
+  request->row_angle = qDegreesToRadians(row_angle_->value());
+  request->edge_margin = edge_margin_->value();
 
   const bool sent = callService<ComputeTrajectory>(
     joinName(raster_node_->text(), "compute_trajectory"), request, kRasterTimeoutMs,
@@ -488,10 +502,11 @@ void TrajectoryTab::computeRaster()
       invalidateFrom(0);
       raster_ = response;
       raster_label_->setText(
-        QString("%1 poses, %2 segments, %3 raster points discarded")
+        QString("%1 poses, %2 segments, %3 raster points discarded, %4 within the edge margin")
         .arg(response->poses.poses.size())
         .arg(response->poses.poses.empty() ? 0 : response->jump_indices.size() + 1)
-        .arg(response->discarded_points));
+        .arg(response->discarded_points)
+        .arg(response->edge_discarded_points));
       if (response->poses.poses.empty()) {
         warn("The raster path is empty");
       }
@@ -706,7 +721,12 @@ void TrajectoryTab::save(rviz_common::Config config) const
   config.mapSetValue("joint_states_topic", joint_states_topic_->text());
   config.mapSetValue("mesh_file", mesh_file_->text());
   config.mapSetValue("mesh_frame", mesh_frame_->text());
+  config.mapSetValue("object_file", object_file_->text());
+  config.mapSetValue("object_frame", object_frame_->text());
+  config.mapSetValue("padding", padding_->value());
   config.mapSetValue("row_step", row_step_->value());
+  config.mapSetValue("row_angle_deg", row_angle_->value());
+  config.mapSetValue("edge_margin", edge_margin_->value());
   config.mapSetValue("keep_tool_orientation", keep_tool_orientation_->isChecked());
   config.mapSetValue("planning_frame", planning_frame_->text());
   config.mapSetValue("deviation_x", deviation_[0]->value());
@@ -726,6 +746,8 @@ void TrajectoryTab::load(const rviz_common::Config & config)
     {"joint_states_topic", joint_states_topic_},
     {"mesh_file", mesh_file_},
     {"mesh_frame", mesh_frame_},
+    {"object_file", object_file_},
+    {"object_frame", object_frame_},
     {"planning_frame", planning_frame_},
     {"group_name", group_name_},
   };
@@ -736,7 +758,10 @@ void TrajectoryTab::load(const rviz_common::Config & config)
     }
   }
   const std::pair<const char *, QDoubleSpinBox *> numbers[] = {
+    {"padding", padding_},
     {"row_step", row_step_},
+    {"row_angle_deg", row_angle_},
+    {"edge_margin", edge_margin_},
     {"deviation_x", deviation_[0]},
     {"deviation_y", deviation_[1]},
     {"deviation_z", deviation_[2]},

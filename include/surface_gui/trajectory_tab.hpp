@@ -105,6 +105,8 @@ private:
 
   // 3. Raster path
   QDoubleSpinBox * row_step_;
+  QDoubleSpinBox * row_angle_;    ///< [deg], sent in rad
+  QDoubleSpinBox * edge_margin_;
   QCheckBox * keep_tool_orientation_;
   QPushButton * raster_button_;
   QLabel * raster_label_;
